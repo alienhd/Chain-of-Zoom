@@ -203,9 +203,9 @@ def load_checkpoint(model, url_or_filename):
 # def load_checkpoint_condition(model, url_or_filename):
 def load_checkpoint_swinlarge_condition(model, url_or_filename, kwargs):
     if kwargs['image_size'] == 224:
-        vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinL_224.json'
+        vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinL_224.json'
     elif kwargs['image_size'] == 384:
-        vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinL_384.json'
+        vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinL_384.json'
     window_size = read_json(vision_config_path)['window_size']
     print('--------------')
     print(url_or_filename)
@@ -241,9 +241,9 @@ def load_checkpoint_swinlarge_condition(model, url_or_filename, kwargs):
 
 def load_checkpoint_swinbase(model, url_or_filename, kwargs):
     if kwargs['image_size'] == 224:
-        vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinB_224.json'
+        vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinB_224.json'
     elif kwargs['image_size'] == 384:
-        vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinB_384.json'
+        vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinB_384.json'
     window_size = read_json(vision_config_path)['window_size']
     print('--------------')
     print(url_or_filename)
@@ -279,9 +279,9 @@ def load_checkpoint_swinbase(model, url_or_filename, kwargs):
 
 def load_checkpoint_swinlarge(model, url_or_filename, kwargs):
     if kwargs['image_size'] == 224:
-        vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinL_224.json'
+        vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinL_224.json'
     elif kwargs['image_size'] == 384:
-        vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinL_384.json'
+        vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinL_384.json'
     window_size = read_json(vision_config_path)['window_size']
     print('--------------')
     print(url_or_filename)

@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore")
 
 class RAM(nn.Module):
     def __init__(self,
-                 med_config=f'{CONFIG_PATH}/configs/med_config.json',
+                 med_config=CONFIG_PATH / 'configs' / 'med_config.json',
                  image_size=384,
                  vit='base',
                  vit_grad_ckpt=False,
@@ -27,8 +27,8 @@ class RAM(nn.Module):
                  prompt='a picture of ',
                  threshold=0.68,
                  delete_tag_index=[],
-                 tag_list=f'{CONFIG_PATH}/data/ram_tag_list.txt',
-                 tag_list_chinese=f'{CONFIG_PATH}/data/ram_tag_list_chinese.txt'):
+                 tag_list=CONFIG_PATH / 'data' / 'ram_tag_list.txt',
+                 tag_list_chinese=CONFIG_PATH / 'data' / 'ram_tag_list_chinese.txt'):
         r""" The Recognize Anything Model (RAM) inference module.
         RAM is a strong image tagging model, which can recognize any common category with high accuracy.
         Described in the paper " Recognize Anything: A Strong Image Tagging Model" https://recognize-anything.github.io/
@@ -45,9 +45,9 @@ class RAM(nn.Module):
         # create image encoder
         if vit == 'swin_b':
             if image_size == 224:
-                vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinB_224.json'
+                vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinB_224.json'
             elif image_size == 384:
-                vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinB_384.json'
+                vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinB_384.json'
             vision_config = read_json(vision_config_path)
             assert image_size == vision_config['image_res']
             # assert config['patch_size'] == 32
@@ -67,15 +67,15 @@ class RAM(nn.Module):
                 drop_path_rate=0.1,
                 ape=False,
                 patch_norm=True,
-                use_checkpoint=False)
+                use_checkpoint=True)
 
         elif vit == 'swin_l':
             if image_size == 224:
-                vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinL_224.json'
+                vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinL_224.json'
             elif image_size == 384:
-                vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinL_384.json'
+                vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinL_384.json'
             elif image_size == 444:
-                vision_config_path = f'{CONFIG_PATH}/configs/swin/config_swinL_444.json'
+                vision_config_path = CONFIG_PATH / 'configs' / 'swin' / 'config_swinL_444.json'
             vision_config = read_json(vision_config_path)
             assert image_size == vision_config['image_res']
             # assert config['patch_size'] == 32
@@ -95,7 +95,7 @@ class RAM(nn.Module):
                 drop_path_rate=0.1,
                 ape=False,
                 patch_norm=True,
-                use_checkpoint=False)
+                use_checkpoint=True)
 
         else:
             self.visual_encoder, vision_width = create_vit(
@@ -126,7 +126,7 @@ class RAM(nn.Module):
         # create image-tag recognition decoder
         self.threshold = threshold
         self.num_class = len(self.tag_list)
-        q2l_config = BertConfig.from_json_file(f'{CONFIG_PATH}/configs/q2l_config.json')
+        q2l_config = BertConfig.from_json_file(CONFIG_PATH / 'configs' / 'q2l_config.json')
         q2l_config.encoder_width = 512
         self.tagging_head = BertModel(config=q2l_config,
                                       add_pooling_layer=False)
@@ -147,11 +147,11 @@ class RAM(nn.Module):
         tie_encoder_decoder_weights(self.tag_encoder, self.tagging_head, '',
                                     ' ')
         self.image_proj = nn.Linear(vision_width, 512)
-        # self.label_embed = nn.Parameter(torch.load(f'{CONFIG_PATH}/data/textual_label_embedding.pth',map_location='cpu').float())
+        # self.label_embed = nn.Parameter(torch.load(CONFIG_PATH / 'data' / 'textual_label_embedding.pth',map_location='cpu').float())
 
         # adjust thresholds for some tags
         self.class_threshold = torch.ones(self.num_class) * self.threshold
-        ram_class_threshold_path = f'{CONFIG_PATH}/data/ram_tag_list_threshold.txt'
+        ram_class_threshold_path = CONFIG_PATH / 'data' / 'ram_tag_list_threshold.txt'
         with open(ram_class_threshold_path, 'r', encoding='utf-8') as f:
             ram_class_threshold = [float(s.strip()) for s in f]
         for key,value in enumerate(ram_class_threshold):

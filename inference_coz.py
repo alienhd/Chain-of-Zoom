@@ -4,6 +4,7 @@ sys.path.append(os.getcwd())
 import glob
 import argparse
 import torch
+from accelerate import cpu_offload
 from torchvision import transforms
 import torchvision.transforms.functional as F
 import numpy as np
@@ -95,23 +96,11 @@ def get_validation_prompt(args, image, prompt_image_path, dape_model=None, vlm_m
         else:
             raise ValueError(f"VLM prompt generation not implemented for rec_type: {args.rec_type}")
 
-        inputs = inputs.to("cuda")
+        inputs = inputs.to("cuda") # Keep this, VLM inputs need to be on GPU for VLM
 
-        original_sr_devices = {}
-        if args.efficient_memory and 'model' in globals() and hasattr(model, 'text_enc_1'): # Check if SR model is defined
-            print("Moving SR model components to CPU for VLM inference.")
-            original_sr_devices['text_enc_1'] = model.text_enc_1.device
-            original_sr_devices['text_enc_2'] = model.text_enc_2.device
-            original_sr_devices['text_enc_3'] = model.text_enc_3.device
-            original_sr_devices['transformer'] = model.transformer.device
-            original_sr_devices['vae'] = model.vae.device
-            
-            model.text_enc_1.to('cpu')
-            model.text_enc_2.to('cpu')
-            model.text_enc_3.to('cpu')
-            model.transformer.to('cpu')
-            model.vae.to('cpu')
-            vlm_model.to('cuda') # vlm_model should already be on its device_map="auto" device
+        if args.efficient_memory: # No need to check for 'model' in globals here, it exists
+            print("Ensuring VLM model is on CUDA for VLM inference, SD3/DAPE should be offloaded.")
+            vlm_model.to('cuda') # Ensure VLM is on GPU
 
         generated_ids = vlm_model.generate(**inputs, max_new_tokens=128)
         generated_ids_trimmed = [
@@ -123,14 +112,11 @@ def get_validation_prompt(args, image, prompt_image_path, dape_model=None, vlm_m
 
         prompt_text = f"{output_text[0]}, {args.prompt}," if args.prompt else output_text[0]
 
-        if args.efficient_memory and 'model' in globals() and hasattr(model, 'text_enc_1'):
-            print("Restoring SR model components to original devices.")
-            vlm_model.to('cpu') # If vlm_model was moved to a specific cuda device and needs to be offloaded
-            model.text_enc_1.to(original_sr_devices['text_enc_1'])
-            model.text_enc_2.to(original_sr_devices['text_enc_2'])
-            model.text_enc_3.to(original_sr_devices['text_enc_3'])
-            model.transformer.to(original_sr_devices['transformer'])
-            model.vae.to(original_sr_devices['vae'])
+        if args.efficient_memory:
+            print("Moving VLM model to CPU after VLM inference.")
+            vlm_model.to('cpu') # Move VLM to CPU after its use
+            print("Clearing CUDA cache after moving VLM to CPU.")
+            torch.cuda.empty_cache()
     else:
         raise ValueError(f"Unknown prompt_type: {args.prompt_type}")
     return prompt_text, lq
@@ -175,28 +161,41 @@ if __name__ == "__main__":
         if not args.efficient_memory:
             from osediff_sd3 import OSEDiff_SD3_TEST, SD3Euler
             model = SD3Euler()
-            model.text_enc_1.to('cuda:0')
-            model.text_enc_2.to('cuda:0')
-            model.text_enc_3.to('cuda:0')
-            model.transformer.to('cuda:1', dtype=torch.float32)
-            model.vae.to('cuda:1', dtype=torch.float32)
+            model.text_enc_1.to(model.device)
+            model.text_enc_2.to(model.device)
+            model.text_enc_3.to(model.device)
+            model.transformer.to(model.device, dtype=torch.float32)
+            model.vae.to(model.device, dtype=torch.float32)
             for p in [model.text_enc_1, model.text_enc_2, model.text_enc_3, model.transformer, model.vae]:
                 p.requires_grad_(False)
             model_test = OSEDiff_SD3_TEST(args, model)
         else:
-            # For efficient memory, text encoders are moved to CPU/GPU on demand in get_validation_prompt
-            # Only load transformer and VAE initially if they are always on GPU
             from osediff_sd3 import OSEDiff_SD3_TEST_efficient, SD3Euler
-            model = SD3Euler()
-            model.transformer.to('cuda', dtype=torch.float32)
-            model.vae.to('cuda', dtype=torch.float32)
+            print("Using efficient_memory path with CPU offloading for SD3 components.")
+            # SD3Euler initializes components on self.device (default 'cuda')
+            # We will offload them here.
+            model = SD3Euler() # model_key will be args.pretrained_model_name_or_path, device='cuda'
+
+            execution_device = model.device # Get the device from SD3Euler, typically 'cuda' or 'cuda:0'
+
+            print(f"Offloading SD3 components with execution_device: {execution_device}")
+            # Offload main components. They'll be moved to GPU for their forward pass.
+            model.text_enc_1 = cpu_offload(model.text_enc_1, execution_device=execution_device)
+            model.text_enc_2 = cpu_offload(model.text_enc_2, execution_device=execution_device)
+            model.text_enc_3 = cpu_offload(model.text_enc_3, execution_device=execution_device)
+            model.transformer = cpu_offload(model.transformer, execution_device=execution_device)
+            model.vae = cpu_offload(model.vae, execution_device=execution_device)
+            print("SD3 components configured for CPU offloading.")
+
+            # Ensure requires_grad is still False after offloading if necessary
             for p in [model.text_enc_1, model.text_enc_2, model.text_enc_3, model.transformer, model.vae]:
                 p.requires_grad_(False)
+
             model_test = OSEDiff_SD3_TEST_efficient(args, model)
 
     # gather input images
     if os.path.isdir(args.input_image):
-        image_names = sorted(glob.glob(f'{args.input_image}/*.png'))
+        image_names = sorted(glob.glob(os.path.join(args.input_image, '*.png')))
     else:
         image_names = [args.input_image]
 
@@ -207,8 +206,14 @@ if __name__ == "__main__":
                    pretrained_condition=args.ram_ft_path,
                    image_size=384,
                    vit='swin_l')
-        DAPE.eval().to("cuda")
-        DAPE = DAPE.to(dtype=weight_dtype)
+        DAPE.eval() # Call eval first
+        if args.efficient_memory and model is not None: # model would be the SD3Euler instance
+            print(f"Offloading DAPE model with execution_device: {model.device}")
+            DAPE = cpu_offload(DAPE, execution_device=model.device)
+            print("DAPE model configured for CPU offloading.")
+        else:
+            DAPE.to("cuda")
+        DAPE = DAPE.to(dtype=weight_dtype) # Apply dtype after potential offload wrapper
 
     # load VLM pipeline if needed
     vlm_model = None
@@ -251,7 +256,7 @@ if __name__ == "__main__":
         os.makedirs(os.path.join(args.output_dir, 'per-scale', 'scale0'), exist_ok=True)
         first_image = Image.open(image_name).convert('RGB')
         first_image = resize_and_center_crop(first_image, args.process_size)
-        first_image.save(f'{rec_dir}/0.png')
+        first_image.save(os.path.join(rec_dir, '0.png'))
         first_image.save(os.path.join(args.output_dir, 'per-scale', 'scale0', bname))
 
         # recursion
@@ -265,7 +270,7 @@ if __name__ == "__main__":
             current_sr_input_image_pil = None
 
             if args.rec_type in ('nearest', 'bicubic', 'onestep'):
-                start_image_pil_path = f'{rec_dir}/0.png'
+                start_image_pil_path = os.path.join(rec_dir, '0.png')
                 start_image_pil = Image.open(start_image_pil_path).convert('RGB')
                 rscale = pow(args.upscale, rec+1)
                 w, h = start_image_pil.size
@@ -276,22 +281,22 @@ if __name__ == "__main__":
                 
                 if args.rec_type == 'onestep':
                     current_sr_input_image_pil = cropped_region.resize((w, h), Image.BICUBIC)
-                    prompt_image_path = f'{rec_dir}/0_input_for_{rec+1}.png'
+                    prompt_image_path = os.path.join(rec_dir, f'0_input_for_{rec+1}.png')
                     current_sr_input_image_pil.save(prompt_image_path)
                 elif args.rec_type == 'bicubic':
                     current_sr_input_image_pil = cropped_region.resize((w, h), Image.BICUBIC)
-                    current_sr_input_image_pil.save(f'{rec_dir}/{rec+1}.png')
+                    current_sr_input_image_pil.save(os.path.join(rec_dir, f'{rec+1}.png'))
                     current_sr_input_image_pil.save(os.path.join(args.output_dir, 'per-scale', f'scale{rec+1}', bname))
                     continue
                 elif args.rec_type == 'nearest':
                     current_sr_input_image_pil = cropped_region.resize((w, h), Image.NEAREST)
-                    current_sr_input_image_pil.save(f'{rec_dir}/{rec+1}.png')
+                    current_sr_input_image_pil.save(os.path.join(rec_dir, f'{rec+1}.png'))
                     current_sr_input_image_pil.save(os.path.join(args.output_dir, 'per-scale', f'scale{rec+1}', bname))
                     continue
 
             elif args.rec_type == 'recursive':
                 # input for SR is based on the previous SR output, cropped and resized
-                prev_sr_output_path = f'{rec_dir}/{rec}.png'
+                prev_sr_output_path = os.path.join(rec_dir, f'{rec}.png')
                 prev_sr_output_pil = Image.open(prev_sr_output_path).convert('RGB')
                 rscale = args.upscale
                 w, h = prev_sr_output_pil.size
@@ -300,12 +305,12 @@ if __name__ == "__main__":
                 current_sr_input_image_pil = cropped_region.resize((w, h), Image.BICUBIC)
 
                 # this resized image is also the input for VLM
-                input_image_path = f'{rec_dir}/{rec+1}_input.png'
+                input_image_path = os.path.join(rec_dir, f'{rec+1}_input.png')
                 current_sr_input_image_pil.save(input_image_path)
                 prompt_image_path = input_image_path
 
             elif args.rec_type == 'recursive_multiscale':
-                prev_sr_output_path = f'{rec_dir}/{rec}.png'
+                prev_sr_output_path = os.path.join(rec_dir, f'{rec}.png')
                 prev_sr_output_pil = Image.open(prev_sr_output_path).convert('RGB')
                 rscale = args.upscale
                 w, h = prev_sr_output_pil.size
@@ -314,7 +319,7 @@ if __name__ == "__main__":
                 current_sr_input_image_pil = cropped_region.resize((w, h), Image.BICUBIC)
 
                 # save the SR input image (which is the "zoomed-in" image for VLM)
-                zoomed_image_path = f'{rec_dir}/{rec+1}_input.png'
+                zoomed_image_path = os.path.join(rec_dir, f'{rec+1}_input.png')
                 current_sr_input_image_pil.save(zoomed_image_path)
                 prompt_image_path = [prev_sr_output_path, zoomed_image_path]
 
@@ -332,16 +337,6 @@ if __name__ == "__main__":
             with torch.no_grad():
                 lq = lq * 2 - 1
 
-                if args.efficient_memory and model is not None:
-                    print("Ensuring SR model components are on CUDA for SR inference.")
-                    if not isinstance(model_test, OSEDiff_SD3_TEST_efficient):
-                        model.text_enc_1.to('cuda:0')
-                        model.text_enc_2.to('cuda:0')
-                        model.text_enc_3.to('cuda:0')
-                    # transformer and VAE should already be on CUDA per initialization
-                    model.transformer.to('cuda', dtype=torch.float32)
-                    model.vae.to('cuda', dtype=torch.float32)
-
                 output_image = model_test(lq, prompt=validation_prompt)
                 output_image = torch.clamp(output_image[0].cpu(), -1.0, 1.0)
                 output_pil = transforms.ToPILImage()(output_image * 0.5 + 0.5)
@@ -350,7 +345,7 @@ if __name__ == "__main__":
                 elif args.align_method == 'wavelet':
                     output_pil = wavelet_color_fix(target=output_pil, source=current_sr_input_image_pil)
 
-            output_pil.save(f'{rec_dir}/{rec+1}.png')   # this is the SR output
+            output_pil.save(os.path.join(rec_dir, f'{rec+1}.png'))   # this is the SR output
             output_pil.save(os.path.join(args.output_dir, 'per-scale', f'scale{rec+1}', bname))
 
         # concatenate and save
@@ -362,3 +357,5 @@ if __name__ == "__main__":
             x_off += im.width
         concat.save(os.path.join(rec_dir, bname))
         concat.save(os.path.join(args.output_dir, 'recursive', bname))
+        print(f"Finished processing {bname}. Clearing CUDA cache.")
+        torch.cuda.empty_cache()
