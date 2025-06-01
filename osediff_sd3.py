@@ -214,6 +214,13 @@ class StableDiffusion3Base():
         self.dtype = dtype
 
         pipe = StableDiffusion3Pipeline.from_pretrained(model_key, torch_dtype=self.dtype)
+        if torch.cuda.is_available():
+            try:
+                print("Attempting to enable xformers memory efficient attention...")
+                pipe.enable_xformers_memory_efficient_attention()
+                print("Successfully enabled xformers memory efficient attention.")
+            except Exception as e:
+                print(f"Could not enable xformers memory efficient attention: {e}. Proceeding without it.")
 
         self.scheduler = pipe.scheduler
 
@@ -569,7 +576,7 @@ class OSEDiff_SD3_REG(torch.nn.Module):
         combined_image.paste(zt_img_pil, (w*2, 0))
         combined_image.paste(reg_img_pil, (w*3, 0))
         combined_image.paste(org_img_pil, (w*4, 0))
-        combined_image.save(os.path.join(args.output_dir, f'visualization/vsd/{global_step}.png'))
+        combined_image.save(os.path.join(args.output_dir, 'visualization', 'vsd', f'{global_step}.png'))
         #-------- Visualization --------#
     
     def diff_loss(self, z0, prompt_embeds, pooled_embeds, net_lpips, args):

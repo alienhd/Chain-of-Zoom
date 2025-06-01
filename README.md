@@ -70,6 +70,44 @@ Which will give a result like below:
 Using ```--efficient_memory``` allows CoZ to run on a single GPU with 24GB VRAM, but highly increases inference time due to offloading. \
 We recommend using two GPUs.
 
+## Running Inference Scripts on Windows
+
+When running the inference scripts (`inference_coz.py`) on Windows, you might encounter issues related to file paths and module resolution. Here are some common points to check:
+
+1.  **File Paths:**
+    *   The scripts have been updated to use `os.path.join` for constructing most file and directory paths, which should improve compatibility with Windows.
+    *   Ensure that paths provided in command-line arguments (e.g., for `--input_image`, `--output_dir`, model paths) use backslashes (`\`) as separators or forward slashes (`/`) if your shell environment (like Git Bash) handles the conversion.
+    *   If using absolute paths, make sure they are correct for your Windows environment (e.g., `C:\Users\YourUser\Project\data`).
+
+2.  **Module Resolution (PYTHONPATH):**
+    *   If you encounter `ModuleNotFoundError` for project-local modules (like `osediff_sd3`, `ram`, etc.), it might be due to Python not finding them.
+    *   You can set the `PYTHONPATH` environment variable to include the project's root directory. For example, if your project is in `C:\Projects\VisionCoz`, you can set `PYTHONPATH` to this directory.
+        *   In Command Prompt: `set PYTHONPATH=C:\Projects\VisionCoz` (for the current session)
+        *   In PowerShell: `$env:PYTHONPATH="C:\Projects\VisionCoz"` (for the current session)
+        *   To set it permanently, search for "environment variables" in Windows settings.
+    *   Alternatively, ensure you are running the scripts from the project's root directory. The scripts include `sys.path.append(os.getcwd())` which should help if the current working directory is the project root.
+
+3.  **xformers on Windows:**
+    *   The `xformers` library, which provides memory-efficient attention, can sometimes be challenging to install or run on Windows.
+    *   The inference script `osediff_sd3.py` now includes a try-except block when attempting to `pipe.enable_xformers_memory_efficient_attention()`. If it fails, it will print a message and proceed without it. Performance might be slightly impacted, or memory usage might be higher.
+    *   If you wish to use `xformers`, refer to the official xformers documentation or community guides for installation on Windows. Pre-built wheels might be available for your Python and CUDA versions.
+
+4.  **Dependencies:**
+    *   Ensure all dependencies from `requirements.txt` are installed correctly in your Python environment. It's recommended to use a virtual environment.
+        ```bash
+        python -m venv venv
+        venv\Scripts\activate
+        pip install -r requirements.txt
+        ```
+
+5.  **Command Syntax:**
+    *   When running Python scripts, ensure you use the `python` command:
+        ```bash
+        python inference_coz.py --input_image "path\to\your\image_or_folder" --output_dir "path\to\your\output" --prompt "your prompt" ... [other arguments]
+        ```
+
+By checking these points, you should be able to run the inference scripts more smoothly on a Windows system.
+
 ## 📝 Citation
 If you find our method useful, please cite as below or leave a star to this repository.
 
