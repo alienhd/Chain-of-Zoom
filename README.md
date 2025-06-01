@@ -70,6 +70,65 @@ Which will give a result like below:
 Using ```--efficient_memory``` allows CoZ to run on a single GPU with 24GB VRAM, but highly increases inference time due to offloading. \
 We recommend using two GPUs.
 
+## Model Quantization (Experimental)
+
+This project includes an experimental feature for quantizing model components (specifically text encoders) to ONNX format using static quantization with `optimum[onnxruntime-gpu]`. This can potentially reduce memory usage and improve inference speed, especially on CPU or compatible GPU hardware, but may also impact model accuracy.
+
+**Current Status:**
+*   Quantization is implemented for `text_enc_1`, `text_enc_2`, and `text_enc_3`.
+*   Quantization for `transformer`, `vae_encoder`, and `vae_decoder` is **not yet implemented**.
+*   The process relies on Hugging Face's `optimum` library and ONNX Runtime.
+
+**How to Quantize Models:**
+
+1.  **Ensure Dependencies:** Make sure you have the necessary packages installed, including `optimum` and `onnxruntime-gpu` (or `onnxruntime` if you only have CPU). These should be covered if you installed via `requirements.txt` after the quantization updates.
+    ```bash
+    pip install optimum[onnxruntime-gpu]
+    ```
+
+2.  **Run the Quantization Script:**
+    Use the `quantize_model.py` script to perform quantization. You need to specify the model component you wish to quantize.
+    ```bash
+    python quantize_model.py --model_component text_enc_1 --pretrained_model_name_or_path stabilityai/stable-diffusion-3-medium-diffusers --output_dir ckpt/quantized
+    ```
+    *   `--model_component`: Choose from `text_enc_1`, `text_enc_2`, `text_enc_3`.
+    *   `--pretrained_model_name_or_path`: Specify the base model to load components from (e.g., `stabilityai/stable-diffusion-3-medium-diffusers`).
+    *   `--output_dir`: Directory where the quantized ONNX models will be saved (e.g., `ckpt/quantized`). The script will create subdirectories for each component (e.g., `ckpt/quantized/text_enc_1/text_enc_1_quantized`).
+    *   `--num_calibration_samples`: Number of sample prompts to use for calibration (default is 10). More samples might improve quantization quality but will take longer.
+    *   `--device_for_quant_script`: Device to run the quantization script on (default is `cpu`). ONNX export and quantization often work best from CPU.
+
+    Repeat the command for each text encoder you wish to quantize:
+    ```bash
+    python quantize_model.py --model_component text_enc_2 ...
+    python quantize_model.py --model_component text_enc_3 ...
+    ```
+
+**How to Use Quantized Models During Inference:**
+
+1.  **Quantize First:** Follow the steps above to generate the quantized ONNX model files.
+2.  **Use the `--quantize` Flag:** When running `inference_coz.py`, add the `--quantize` flag.
+    ```bash
+    python inference_coz.py \
+      -i samples \
+      -o inference_results/coz_quantized_vlmprompt \
+      --rec_type recursive_multiscale \
+      --prompt_type vlm \
+      --lora_path ckpt/SR_LoRA/model_20001.pkl \
+      --vae_path ckpt/SR_VAE/vae_encoder_20001.pt \
+      --pretrained_model_name_or_path 'stabilityai/stable-diffusion-3-medium-diffusers' \
+      --ram_ft_path ckpt/DAPE/DAPE.pth \
+      --ram_path ckpt/RAM/ram_swin_large_14m.pth \
+      --quantize
+    ```
+    The script will attempt to load the quantized versions of `text_enc_1`, `text_enc_2`, and `text_enc_3` from the `ckpt/quantized/<component_name>/<component_name_quantized>` directory. If a quantized model is not found or fails to load, it will fall back to using the original PyTorch version for that component.
+
+**Notes and Limitations:**
+*   **Experimental:** This feature is experimental. Quantization might lead to changes in output quality or, in some cases, errors if the ONNX model is not perfectly compatible.
+*   **Calibration Data:** The current calibration process for text encoders uses a small, fixed set of generic prompts. For optimal performance, this calibration data should ideally be more diverse and representative of the actual prompts you intend to use.
+*   **T5 Encoder (`text_enc_3`):** Quantizing T5-based models can be complex. The script attempts to use the Hugging Face name (`google/t5-v1_1-xl`) for `text_enc_3`. If issues arise, manual ONNX export and specific quantization strategies for T5 might be needed.
+*   **Performance:** The actual performance benefits (speed, memory) will vary depending on your hardware (CPU, GPU type) and the specifics of the ONNX Runtime execution providers.
+*   **Error Handling:** If a quantized component fails to load or run, the inference script is designed to fall back to the original PyTorch component, but this fallback might not cover all error scenarios.
+
 ## Running Inference Scripts on Windows
 
 When running the inference scripts (`inference_coz.py`) on Windows, you might encounter issues related to file paths and module resolution. Here are some common points to check:
