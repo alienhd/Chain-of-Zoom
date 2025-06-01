@@ -4,6 +4,7 @@ sys.path.append(os.getcwd())
 import glob
 import argparse
 import torch
+from pathlib import Path
 from accelerate import cpu_offload
 from torchvision import transforms
 import torchvision.transforms.functional as F
@@ -148,6 +149,7 @@ if __name__ == "__main__":
     parser.add_argument('--rec_type', type=str, choices=['nearest', 'bicubic','onestep','recursive','recursive_multiscale'], default='recursive', help='type of inference to use')
     parser.add_argument('--rec_num', type=int, default=4)
     parser.add_argument('--efficient_memory', default=False, action='store_true')
+    parser.add_argument('--quantize', action='store_true', help='Load quantized ONNX models if available.')
     args = parser.parse_args()
 
     global weight_dtype
@@ -192,6 +194,71 @@ if __name__ == "__main__":
                 p.requires_grad_(False)
 
             model_test = OSEDiff_SD3_TEST_efficient(args, model)
+
+    if args.quantize and model is not None: # Ensure model is initialized
+        print("Attempting to load Quantized ONNX model for text_enc_1...")
+        try:
+            from optimum.onnxruntime import ORTModelForFeatureExtraction
+            quantized_model_dir = Path("ckpt/quantized") / "text_enc_1" / "text_enc_1_quantized"
+            # ^ Adjusted path based on common Optimum save structure (nested dir for actual model files)
+
+            onnx_provider = "CUDAExecutionProvider" if torch.cuda.is_available() else "CPUExecutionProvider"
+            print(f"Using ONNX Runtime provider: {onnx_provider}")
+
+            # Check if the directory and a potential ONNX model file exist (e.g., model.onnx or encoder.onnx)
+            # ORTModelForFeatureExtraction.from_pretrained expects a directory containing model.onnx or similar.
+            # A more robust check would be to see if quantized_model_dir / "model.onnx" (or similar name) exists.
+            # For now, we rely on from_pretrained to raise an error if not found.
+
+            model.text_enc_1 = ORTModelForFeatureExtraction.from_pretrained(
+                quantized_model_dir,
+                provider=onnx_provider
+            )
+            # Note: The .device attribute for ORTModels might not be the same as PyTorch models.
+            # It's more about the execution provider. For logging, we might just state the provider.
+            print(f"Successfully loaded quantized ONNX model for text_enc_1 using {onnx_provider}.")
+
+        except Exception as e:
+            print(f"Failed to load quantized text_enc_1: {e}. Using original PyTorch model.")
+            import traceback
+            traceback.print_exc()
+
+        # --- Load text_enc_2 ---
+        quantized_text_enc_2_dir = Path("ckpt/quantized") / "text_enc_2" / "text_enc_2_quantized"
+        if quantized_text_enc_2_dir.exists():
+            print("Loading Quantized ONNX model for text_enc_2...")
+            try:
+                model.text_enc_2 = ORTModelForFeatureExtraction.from_pretrained(
+                    quantized_text_enc_2_dir,
+                    provider=onnx_provider
+                )
+                print(f"Successfully loaded quantized ONNX model for text_enc_2 using {onnx_provider}.")
+            except Exception as e:
+                print(f"Failed to load quantized text_enc_2: {e}. Using original PyTorch model.")
+                # Fallback to original PyTorch model is implicit as it's already loaded in 'model'
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"Quantized model for text_enc_2 not found at {quantized_text_enc_2_dir}. Using PyTorch version.")
+
+        # --- Load text_enc_3 ---
+        quantized_text_enc_3_dir = Path("ckpt/quantized") / "text_enc_3" / "text_enc_3_quantized"
+        if quantized_text_enc_3_dir.exists():
+            print("Loading Quantized ONNX model for text_enc_3...")
+            try:
+                # T5EncoderModel might also use ORTModelForFeatureExtraction if the task is similar
+                model.text_enc_3 = ORTModelForFeatureExtraction.from_pretrained(
+                    quantized_text_enc_3_dir,
+                    provider=onnx_provider
+                )
+                print(f"Successfully loaded quantized ONNX model for text_enc_3 using {onnx_provider}.")
+            except Exception as e:
+                print(f"Failed to load quantized text_enc_3: {e}. Using original PyTorch model.")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"Quantized model for text_enc_3 not found at {quantized_text_enc_3_dir}. Using PyTorch version.")
+
 
     # gather input images
     if os.path.isdir(args.input_image):
